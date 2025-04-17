@@ -1,0 +1,6 @@
+database = "postgres://danielle@localhost:5432/otter?sslmode=disable"
+queries  = "./internal/engine/pgengine/database/queries"
+
+[package]
+name = "database"
+path = "./internal/engine/pgengine/database"
