@@ -114,12 +114,6 @@ func (e Engine) ResolveQueries(ctx context.Context, queries map[string]string) (
 	return result, nil
 }
 
-type pgType struct {
-	Name    string
-	Type    byte
-	NotNull bool
-}
-
 func (e Engine) resolveType(ctx context.Context, oid uint32, nullable *bool) (engine.Type, error) {
 	typeInfo, err := e.store.GetTypeByOID(ctx, sql.Null[uint32]{Valid: true, V: oid})
 	if err != nil {
