@@ -15,7 +15,7 @@ import (
 
 type Engine struct {
 	conn  *pgx.Conn
-	store *database.Store
+	store database.Store
 }
 
 var _ engine.Engine = Engine{}
@@ -221,11 +221,11 @@ func (e Engine) computeNullableOutputs(ctx context.Context, plan queryPlan) (map
 		for _, output := range plan.Output {
 			columnName, _ := strings.CutPrefix(output, plan.Alias+".")
 
-			nullable, err := e.store.GetColumnNullability(ctx,
-				sql.NullString{Valid: true, String: plan.Schema},
-				sql.NullString{Valid: true, String: plan.Relation},
-				sql.NullString{Valid: true, String: columnName},
-			)
+			nullable, err := e.store.GetColumnNullability(ctx, database.GetColumnNullabilityParams{
+				Schema:     sql.NullString{Valid: true, String: plan.Schema},
+				Relation:   sql.NullString{Valid: true, String: plan.Relation},
+				ColumnName: sql.NullString{Valid: true, String: columnName},
+			})
 			if err != nil {
 				return nil, fmt.Errorf("compute output '%s' nullability: %w", output, err)
 			}

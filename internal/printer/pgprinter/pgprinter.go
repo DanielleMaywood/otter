@@ -27,15 +27,17 @@ func (p Printer) PrintQueries(queries engine.Result) printer.Result {
 	modelsFile := jen.NewFile(p.packageName)
 
 	databaseFile.ImportName("github.com/jackc/pgx/v5", "pgx")
-	databaseFile.Type().Id("Store").Struct(
+	interfaceType := databaseFile.Type().Id("Store")
+
+	databaseFile.Type().Id("Querier").Struct(
 		jen.Id("db").Op("*").Qual("github.com/jackc/pgx/v5", "Conn"),
 	)
 	databaseFile.Func().
 		Id("New").
 		Params(jen.Id("db").Op("*").Qual("github.com/jackc/pgx/v5", "Conn")).
-		Op("*").Id("Store").
+		Op("*").Id("Querier").
 		Block(
-			jen.Return(jen.Op("&").Id("Store").Values(jen.Dict{
+			jen.Return(jen.Op("&").Id("Querier").Values(jen.Dict{
 				jen.Id("db"): jen.Id("db"),
 			})),
 		)
@@ -57,10 +59,15 @@ func (p Printer) PrintQueries(queries engine.Result) printer.Result {
 	queryNames := slices.Collect(maps.Keys(queries.Queries))
 	slices.SortStableFunc(queryNames, cmp.Compare)
 
-	for _, queryName := range queryNames {
+	interfaceMethods := make([]jen.Code, len(queryNames))
+	for idx, queryName := range queryNames {
 		query := queries.Queries[queryName]
-		p.printQuery(queriesFile, query)
+		interfaceMethod := p.printQuery(queriesFile, query)
+
+		interfaceMethods[idx] = interfaceMethod
 	}
+
+	interfaceType.Interface(interfaceMethods...).Line()
 
 	return printer.Result{
 		Database: databaseFile.GoString(),
@@ -69,25 +76,24 @@ func (p Printer) PrintQueries(queries engine.Result) printer.Result {
 	}
 }
 
-func (p Printer) printQuery(file *jen.File, query engine.Query) {
+func (p Printer) printQuery(file *jen.File, query engine.Query) jen.Code {
 	switch query.Type {
 	case engine.QueryTypeExec:
-		p.printExecQuery(file, query)
+		return p.printExecQuery(file, query)
 
 	case engine.QueryTypeOne:
-		p.printOneQuery(file, query)
+		return p.printOneQuery(file, query)
 
 	case engine.QueryTypeMany:
-		p.printManyQuery(file, query)
+		return p.printManyQuery(file, query)
 
 	default:
 		panic(fmt.Sprintf("unexpected query kind: %s", query.Type))
 	}
 }
 
-func (p Printer) printExecQuery(file *jen.File, query engine.Query) {
-	params := p.buildQueryParams(query)
-	args := p.buildQueryArgs(query)
+func (p Printer) printExecQuery(file *jen.File, query engine.Query) jen.Code {
+	params, args := p.buildQueryParamsAndArgs(file, query)
 
 	file.Func().
 		Params(jen.Id("s").Op("*").Id("Store")).
@@ -106,15 +112,17 @@ func (p Printer) printExecQuery(file *jen.File, query engine.Query) {
 		).
 		Line()
 
+	return jen.Id(query.Name).
+		Params(append([]jen.Code{jen.Id("ctx").Qual("context", "Context")}, params...)...).
+		Error()
 }
 
-func (p Printer) printOneQuery(file *jen.File, query engine.Query) {
+func (p Printer) printOneQuery(file *jen.File, query engine.Query) jen.Code {
 	resultType, scanRefs := p.maybePrintQueryRowType(file, query)
-	params := p.buildQueryParams(query)
-	args := p.buildQueryArgs(query)
+	params, args := p.buildQueryParamsAndArgs(file, query)
 
 	file.Func().
-		Params(jen.Id("s").Op("*").Id("Store")).
+		Params(jen.Id("q").Op("*").Id("Querier")).
 		Id(query.Name).
 		Params(
 			append([]jen.Code{jen.Id("ctx").Qual("context", "Context")}, params...)...,
@@ -123,7 +131,7 @@ func (p Printer) printOneQuery(file *jen.File, query engine.Query) {
 		Block(
 			jen.Var().Id("item").Add(resultType),
 			jen.If(
-				jen.Err().Op(":=").Id("s").Dot("db").Dot("QueryRow").Call(
+				jen.Err().Op(":=").Id("q").Dot("db").Dot("QueryRow").Call(
 					append([]jen.Code{jen.Id("ctx"), jen.Lit(query.SQL)}, args...)...,
 				).Dot("Scan").Call(scanRefs...),
 				jen.Err().Op("!=").Nil(),
@@ -133,15 +141,18 @@ func (p Printer) printOneQuery(file *jen.File, query engine.Query) {
 			jen.Return(jen.Id("item"), jen.Nil()),
 		).
 		Line()
+
+	return jen.Id(query.Name).
+		Params(append([]jen.Code{jen.Id("ctx").Qual("context", "Context")}, params...)...).
+		Params(jen.Add(resultType), jen.Error())
 }
 
-func (p Printer) printManyQuery(file *jen.File, query engine.Query) {
+func (p Printer) printManyQuery(file *jen.File, query engine.Query) jen.Code {
 	resultType, scanRefs := p.maybePrintQueryRowType(file, query)
-	params := p.buildQueryParams(query)
-	args := p.buildQueryArgs(query)
+	params, args := p.buildQueryParamsAndArgs(file, query)
 
 	file.Func().
-		Params(jen.Id("s").Op("*").Id("Store")).
+		Params(jen.Id("q").Op("*").Id("Querier")).
 		Id(query.Name).
 		Params(
 			append([]jen.Code{jen.Id("ctx").Qual("context", "Context")}, params...)...,
@@ -150,7 +161,7 @@ func (p Printer) printManyQuery(file *jen.File, query engine.Query) {
 		Block(
 			jen.List(jen.Id("rows"), jen.Err()).
 				Op(":=").
-				Id("s").Dot("db").Dot("Query").Call(
+				Id("q").Dot("db").Dot("Query").Call(
 				append([]jen.Code{jen.Id("ctx"), jen.Lit(query.SQL)}, args...)...,
 			),
 			jen.If(jen.Err().Op("!=").Nil()).Block(
@@ -178,34 +189,72 @@ func (p Printer) printManyQuery(file *jen.File, query engine.Query) {
 			jen.Return(jen.Id("items"), jen.Nil()),
 		).
 		Line()
+
+	return jen.Id(query.Name).
+		Params(append([]jen.Code{jen.Id("ctx").Qual("context", "Context")}, params...)...).
+		Params(jen.Index().Add(resultType), jen.Error())
 }
 
-func (p Printer) buildQueryParams(query engine.Query) []jen.Code {
-	params := make([]jen.Code, len(query.Inputs))
-	for idx, input := range query.Inputs {
-		paramName := input.Name
+func (p Printer) buildQueryParamsAndArgs(file *jen.File, query engine.Query) ([]jen.Code, []jen.Code) {
+	if len(query.Inputs) == 1 {
+		paramName := query.Inputs[0].Name
 		if paramName == "" {
-			paramName = fmt.Sprintf("arg%d", idx)
+			paramName = "arg0"
 		}
 
-		typeName := p.typeID(input.Type)
-		params[idx] = jen.Id(paramName).Add(typeName)
-	}
-	return params
-}
+		typeName := p.typeID(query.Inputs[0].Type)
 
-func (p Printer) buildQueryArgs(query engine.Query) []jen.Code {
-	params := make([]jen.Code, len(query.Inputs))
+		return []jen.Code{jen.Id(paramName).Add(typeName)}, []jen.Code{jen.Id(paramName)}
+	}
+
+	fields := make([]jen.Code, len(query.Inputs))
+	args := make([]jen.Code, len(query.Inputs))
 	for idx, input := range query.Inputs {
-		paramName := input.Name
-		if paramName == "" {
-			paramName = fmt.Sprintf("arg%d", idx)
+		inputName := strcase.ToCamel(input.Name)
+		if inputName == "" {
+			inputName = fmt.Sprintf("Arg%d", idx)
 		}
 
-		params[idx] = jen.Id(paramName)
+		fieldType := p.typeID(input.Type)
+
+		fields[idx] = jen.Id(inputName).Add(fieldType)
+		args[idx] = jen.Id("params").Dot(inputName)
 	}
-	return params
+
+	file.Type().
+		Id(query.Name + "Params").
+		Struct(fields...).
+		Line()
+
+	return []jen.Code{jen.Id("params").Id(query.Name + "Params")}, args
 }
+
+// func (p Printer) buildQueryParams(query engine.Query) []jen.Code {
+// 	params := make([]jen.Code, len(query.Inputs))
+// 	for idx, input := range query.Inputs {
+// 		paramName := input.Name
+// 		if paramName == "" {
+// 			paramName = fmt.Sprintf("arg%d", idx)
+// 		}
+
+// 		typeName := p.typeID(input.Type)
+// 		params[idx] = jen.Id(paramName).Add(typeName)
+// 	}
+// 	return params
+// }
+
+// func (p Printer) buildQueryArgs(query engine.Query) []jen.Code {
+// 	params := make([]jen.Code, len(query.Inputs))
+// 	for idx, input := range query.Inputs {
+// 		paramName := input.Name
+// 		if paramName == "" {
+// 			paramName = fmt.Sprintf("arg%d", idx)
+// 		}
+
+// 		params[idx] = jen.Id(paramName)
+// 	}
+// 	return params
+// }
 
 func (p Printer) buildQueryScanReferences(query engine.Query) []jen.Code {
 	scanReferences := make([]jen.Code, len(query.Outputs))

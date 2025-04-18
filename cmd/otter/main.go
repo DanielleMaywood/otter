@@ -15,11 +15,14 @@ import (
 )
 
 type Config struct {
-	Database string
-	Queries  string
-
+	Database  string
 	Overrides printer.TypeOverrides `toml:"overrides"`
 
+	Stores []StoreConfig
+}
+
+type StoreConfig struct {
+	Queries string
 	Package struct {
 		Name string
 		Path string
@@ -82,51 +85,61 @@ func run(ctx context.Context) error {
 
 	e := pgengine.New(conn)
 
-	queryEntries, err := os.ReadDir(config.Queries)
-	if err != nil {
-		return fmt.Errorf("read queries dir: %w", err)
-	}
-
-	queryMap := make(map[string]string)
-	for _, queryEntry := range queryEntries {
-		if queryEntry.IsDir() {
-			continue
-		}
-
-		queryPath := queryEntry.Name()
-		queryName := filepath.Base(queryPath)
-		queryName, isQuery := strings.CutSuffix(queryName, ".sql")
-		if !isQuery {
-			continue
-		}
-
-		query, err := os.ReadFile(filepath.Join(config.Queries, queryPath))
+	for _, store := range config.Stores {
+		queryEntries, err := os.ReadDir(store.Queries)
 		if err != nil {
-			return fmt.Errorf("read query: %w", err)
+			return fmt.Errorf("read queries dir: %w", err)
 		}
 
-		queryMap[queryName] = strings.TrimSpace(string(query))
+		queryMap := make(map[string]string)
+		for _, queryEntry := range queryEntries {
+			if queryEntry.IsDir() {
+				continue
+			}
+
+			queryPath := queryEntry.Name()
+			queryName := filepath.Base(queryPath)
+			queryName, isQuery := strings.CutSuffix(queryName, ".sql")
+			if !isQuery {
+				continue
+			}
+
+			query, err := os.ReadFile(filepath.Join(store.Queries, queryPath))
+			if err != nil {
+				return fmt.Errorf("read query: %w", err)
+			}
+
+			queryMap[queryName] = strings.TrimSpace(string(query))
+		}
+
+		queries, err := e.ResolveQueries(ctx, queryMap)
+		if err != nil {
+			return fmt.Errorf("resolve queries: %w", err)
+		}
+
+		printer := pgprinter.New(store.Package.Name, config.Overrides)
+		printed := printer.PrintQueries(queries)
+
+		if err := os.MkdirAll(store.Package.Path, 0644); err != nil {
+			return fmt.Errorf("make package dir: %w", err)
+		}
+
+		databasePath := filepath.Join(store.Package.Path, "database.go")
+		queriesPath := filepath.Join(store.Package.Path, "queries.go")
+		modelsPath := filepath.Join(store.Package.Path, "models.go")
+
+		if err := os.WriteFile(databasePath, []byte(printed.Database), 0644); err != nil {
+			return fmt.Errorf("write database.go: %w", err)
+		}
+
+		if err := os.WriteFile(queriesPath, []byte(printed.Queries), 0644); err != nil {
+			return fmt.Errorf("write queries.go: %w", err)
+		}
+
+		if err := os.WriteFile(modelsPath, []byte(printed.Models), 0644); err != nil {
+			return fmt.Errorf("write models.go: %w", err)
+		}
 	}
-
-	queries, err := e.ResolveQueries(ctx, queryMap)
-	if err != nil {
-		return fmt.Errorf("resolve queries: %w", err)
-	}
-
-	printer := pgprinter.New(config.Package.Name, config.Overrides)
-	printed := printer.PrintQueries(queries)
-
-	if err := os.MkdirAll(config.Package.Path, 0644); err != nil {
-		return fmt.Errorf("make package dir: %w", err)
-	}
-
-	databasePath := filepath.Join(config.Package.Path, "database.go")
-	queriesPath := filepath.Join(config.Package.Path, "queries.go")
-	modelsPath := filepath.Join(config.Package.Path, "models.go")
-
-	os.WriteFile(databasePath, []byte(printed.Database), 0644)
-	os.WriteFile(queriesPath, []byte(printed.Queries), 0644)
-	os.WriteFile(modelsPath, []byte(printed.Models), 0644)
 
 	return nil
 }
