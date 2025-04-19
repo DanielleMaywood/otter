@@ -51,7 +51,6 @@ func TestQueries(t *testing.T) {
 			},
 			expectedQueries: map[string]engine.Query{
 				"GetUsers": {
-					Name:   "GetUsers",
 					Type:   engine.QueryTypeMany,
 					Inputs: []engine.Input{},
 					Outputs: []engine.Output{
@@ -73,7 +72,6 @@ func TestQueries(t *testing.T) {
 					},
 				},
 				"GetUserByID": {
-					Name: "GetUserByID",
 					Type: engine.QueryTypeOne,
 					Inputs: []engine.Input{
 						{
@@ -105,6 +103,166 @@ func TestQueries(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "SimpleEmployeeTable",
+			schema: `
+				create table employees ( id int not null, name text not null, department_id int );
+				create table departments ( id int not null, name text not null );
+			`,
+			queries: map[string]string{
+				"GetEmployeesWithDepartments": `
+					-- :many
+					select
+						e.id   as employee_id,
+						e.name as employee_name,
+						d.id   as department_id,
+						d.name as department_name
+					from employees e
+					left join departments d
+					on e.department_id = d.id
+				`,
+				"GetDepartmentsWithEmployees": `
+					-- :many
+					select
+						e.id   as employee_id,
+						e.name as employee_name,
+						d.id   as department_id,
+						d.name as department_name
+					from employees e
+					right join departments d
+					on e.department_id = d.id
+				`,
+				"GetEmployeesWithValidDepartments": `
+					-- :many
+					select
+						e.id   as employee_id,
+						e.name as employee_name,
+						d.id   as department_id,
+						d.name as department_name
+					from employees e
+					inner join departments d
+					on e.department_id = d.id
+				`,
+			},
+			expectedTypes: []engine.Type{
+				{
+					Kind: engine.TypeKindBase,
+					Name: "Int4",
+				},
+				{
+					Kind: engine.TypeKindBase,
+					Name: "Text",
+				},
+			},
+			expectedQueries: map[string]engine.Query{
+				"GetEmployeesWithDepartments": {
+					Type:   engine.QueryTypeMany,
+					Inputs: []engine.Input{},
+					Outputs: []engine.Output{
+						{
+							Name: "EmployeeId",
+							Type: engine.Type{
+								Kind: engine.TypeKindBase,
+								Name: "Int4",
+							},
+						},
+						{
+							Name: "EmployeeName",
+							Type: engine.Type{
+								Kind: engine.TypeKindBase,
+								Name: "Text",
+							},
+						},
+						{
+							Name: "DepartmentId",
+							Type: engine.Type{
+								Kind:     engine.TypeKindBase,
+								Name:     "Int4",
+								Nullable: true,
+							},
+						},
+						{
+							Name: "DepartmentName",
+							Type: engine.Type{
+								Kind:     engine.TypeKindBase,
+								Name:     "Text",
+								Nullable: true,
+							},
+						},
+					},
+				},
+				"GetDepartmentsWithEmployees": {
+					Type:   engine.QueryTypeMany,
+					Inputs: []engine.Input{},
+					Outputs: []engine.Output{
+						{
+							Name: "EmployeeId",
+							Type: engine.Type{
+								Kind:     engine.TypeKindBase,
+								Name:     "Int4",
+								Nullable: true,
+							},
+						},
+						{
+							Name: "EmployeeName",
+							Type: engine.Type{
+								Kind:     engine.TypeKindBase,
+								Name:     "Text",
+								Nullable: true,
+							},
+						},
+						{
+							Name: "DepartmentId",
+							Type: engine.Type{
+								Kind: engine.TypeKindBase,
+								Name: "Int4",
+							},
+						},
+						{
+							Name: "DepartmentName",
+							Type: engine.Type{
+								Kind: engine.TypeKindBase,
+								Name: "Text",
+							},
+						},
+					},
+				},
+				"GetEmployeesWithValidDepartments": {
+					Type:   engine.QueryTypeMany,
+					Inputs: []engine.Input{},
+					Outputs: []engine.Output{
+						{
+							Name: "EmployeeId",
+							Type: engine.Type{
+								Kind: engine.TypeKindBase,
+								Name: "Int4",
+							},
+						},
+						{
+							Name: "EmployeeName",
+							Type: engine.Type{
+								Kind: engine.TypeKindBase,
+								Name: "Text",
+							},
+						},
+						{
+							Name: "DepartmentId",
+							Type: engine.Type{
+								Kind: engine.TypeKindBase,
+								Name: "Int4",
+							},
+						},
+						{
+							Name: "DepartmentName",
+							Type: engine.Type{
+								Kind: engine.TypeKindBase,
+								Name: "Text",
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -112,6 +270,7 @@ func TestQueries(t *testing.T) {
 		// it here.
 		for queryName, query := range tt.queries {
 			expectedQuery := tt.expectedQueries[queryName]
+			expectedQuery.Name = queryName
 			expectedQuery.SQL = strings.TrimSpace(query)
 			tt.expectedQueries[queryName] = expectedQuery
 		}
