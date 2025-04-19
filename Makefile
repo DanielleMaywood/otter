@@ -4,6 +4,10 @@ SHELL_SRC_FILES := $(shell find . -type f -name '*.sh')
 build:
 	./scripts/build.sh
 
+.PHONY: test
+test:
+	gotestsum --format-hide-empty-pkg
+
 .PHONY: run
 run: build
 	./otter
