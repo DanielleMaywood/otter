@@ -1,7 +1,6 @@
-database = "postgres://danielle@localhost:5432/otter?sslmode=disable"
-
 [[stores]]
-queries = "./internal/engine/pgengine/database/queries"
+database = "postgres://danielle@localhost:5432/otter?sslmode=disable"
+queries  = "./internal/engine/pgengine/database/queries"
 
 package.name = "database"
 package.path = "./internal/engine/pgengine/database"

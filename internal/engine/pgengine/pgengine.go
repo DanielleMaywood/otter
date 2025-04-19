@@ -34,7 +34,7 @@ func (e Engine) ResolveQueries(ctx context.Context, queries map[string]string) (
 	for queryName, query := range queries {
 		var queryType engine.Query
 		queryType.Name = queryName
-		queryType.SQL = query
+		queryType.SQL = strings.TrimSpace(query)
 
 		preparedQuery, err := e.conn.Prepare(ctx, queryName, query)
 		if err != nil {
