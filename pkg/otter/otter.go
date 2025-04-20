@@ -8,6 +8,7 @@ import (
 
 	"github.com/DanielleMaywood/otter/internal/engine"
 	"github.com/DanielleMaywood/otter/internal/printer"
+	"github.com/DanielleMaywood/otter/internal/transformer"
 	"github.com/spf13/afero"
 )
 
@@ -18,9 +19,17 @@ type Otter struct {
 	printer printer.Printer
 	fs      afero.Fs
 
+	initialisms map[string]string
+
 	databasePath string
 	queriesPath  string
 	modelsPath   string
+}
+
+func WithInitialisms(initialisms map[string]string) Option {
+	return func(o *Otter) {
+		o.initialisms = initialisms
+	}
 }
 
 func WithFS(fs afero.Fs) Option {
@@ -56,6 +65,10 @@ func (o Otter) Run(ctx context.Context, queryPath, outPath string) error {
 	if err != nil {
 		return fmt.Errorf("resolve queries: %w", err)
 	}
+
+	transformer.Transform(&queries,
+		transformer.NewTypeNameTransformer(transformer.NewStringCaser(o.initialisms)),
+	)
 
 	printed := o.printer.PrintQueries(queries)
 	if err := o.writePrintedQueries(outPath, printed); err != nil {
