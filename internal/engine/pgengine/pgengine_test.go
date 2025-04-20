@@ -38,15 +38,21 @@ func TestQueries(t *testing.T) {
 					-- $1: id
 					select * from users where id = $1 limit 1
 				`,
+				"InsertUser": `
+					-- :exec
+					-- $1: id
+					-- $2: username
+					insert into users ( id, username ) values ($1, $2)
+				`,
 			},
 			expectedTypes: []engine.Type{
 				{
 					Kind: engine.TypeKindBase,
-					Name: "Int4",
+					Name: "int4",
 				},
 				{
 					Kind: engine.TypeKindBase,
-					Name: "Text",
+					Name: "text",
 				},
 			},
 			expectedQueries: map[string]engine.Query{
@@ -55,17 +61,17 @@ func TestQueries(t *testing.T) {
 					Inputs: []engine.Input{},
 					Outputs: []engine.Output{
 						{
-							Name: "Id",
+							Name: "id",
 							Type: engine.Type{
 								Kind: engine.TypeKindBase,
-								Name: "Int4",
+								Name: "int4",
 							},
 						},
 						{
-							Name: "Username",
+							Name: "username",
 							Type: engine.Type{
 								Kind:     engine.TypeKindBase,
-								Name:     "Text",
+								Name:     "text",
 								Nullable: true,
 							},
 						},
@@ -77,29 +83,49 @@ func TestQueries(t *testing.T) {
 						{
 							Name: "id",
 							Type: engine.Type{
-								Kind:     engine.TypeKindBase,
-								Name:     "Int4",
-								Nullable: true,
+								Kind: engine.TypeKindBase,
+								Name: "int4",
 							},
 						},
 					},
 					Outputs: []engine.Output{
 						{
-							Name: "Id",
+							Name: "id",
 							Type: engine.Type{
 								Kind: engine.TypeKindBase,
-								Name: "Int4",
+								Name: "int4",
 							},
 						},
 						{
-							Name: "Username",
+							Name: "username",
 							Type: engine.Type{
 								Kind:     engine.TypeKindBase,
-								Name:     "Text",
+								Name:     "text",
 								Nullable: true,
 							},
 						},
 					},
+				},
+				"InsertUser": {
+					Type: engine.QueryTypeExec,
+					Inputs: []engine.Input{
+						{
+							Name: "id",
+							Type: engine.Type{
+								Kind: engine.TypeKindBase,
+								Name: "int4",
+							},
+						},
+						{
+							Name: "username",
+							Type: engine.Type{
+								Kind:     engine.TypeKindBase,
+								Name:     "text",
+								Nullable: true,
+							},
+						},
+					},
+					Outputs: []engine.Output{},
 				},
 			},
 		},
@@ -147,11 +173,11 @@ func TestQueries(t *testing.T) {
 			expectedTypes: []engine.Type{
 				{
 					Kind: engine.TypeKindBase,
-					Name: "Int4",
+					Name: "int4",
 				},
 				{
 					Kind: engine.TypeKindBase,
-					Name: "Text",
+					Name: "text",
 				},
 			},
 			expectedQueries: map[string]engine.Query{
@@ -160,32 +186,32 @@ func TestQueries(t *testing.T) {
 					Inputs: []engine.Input{},
 					Outputs: []engine.Output{
 						{
-							Name: "EmployeeId",
+							Name: "employee_id",
 							Type: engine.Type{
 								Kind: engine.TypeKindBase,
-								Name: "Int4",
+								Name: "int4",
 							},
 						},
 						{
-							Name: "EmployeeName",
+							Name: "employee_name",
 							Type: engine.Type{
 								Kind: engine.TypeKindBase,
-								Name: "Text",
+								Name: "text",
 							},
 						},
 						{
-							Name: "DepartmentId",
+							Name: "department_id",
 							Type: engine.Type{
 								Kind:     engine.TypeKindBase,
-								Name:     "Int4",
+								Name:     "int4",
 								Nullable: true,
 							},
 						},
 						{
-							Name: "DepartmentName",
+							Name: "department_name",
 							Type: engine.Type{
 								Kind:     engine.TypeKindBase,
-								Name:     "Text",
+								Name:     "text",
 								Nullable: true,
 							},
 						},
@@ -196,33 +222,33 @@ func TestQueries(t *testing.T) {
 					Inputs: []engine.Input{},
 					Outputs: []engine.Output{
 						{
-							Name: "EmployeeId",
+							Name: "employee_id",
 							Type: engine.Type{
 								Kind:     engine.TypeKindBase,
-								Name:     "Int4",
+								Name:     "int4",
 								Nullable: true,
 							},
 						},
 						{
-							Name: "EmployeeName",
+							Name: "employee_name",
 							Type: engine.Type{
 								Kind:     engine.TypeKindBase,
-								Name:     "Text",
+								Name:     "text",
 								Nullable: true,
 							},
 						},
 						{
-							Name: "DepartmentId",
+							Name: "department_id",
 							Type: engine.Type{
 								Kind: engine.TypeKindBase,
-								Name: "Int4",
+								Name: "int4",
 							},
 						},
 						{
-							Name: "DepartmentName",
+							Name: "department_name",
 							Type: engine.Type{
 								Kind: engine.TypeKindBase,
-								Name: "Text",
+								Name: "text",
 							},
 						},
 					},
@@ -232,31 +258,61 @@ func TestQueries(t *testing.T) {
 					Inputs: []engine.Input{},
 					Outputs: []engine.Output{
 						{
-							Name: "EmployeeId",
+							Name: "employee_id",
 							Type: engine.Type{
 								Kind: engine.TypeKindBase,
-								Name: "Int4",
+								Name: "int4",
 							},
 						},
 						{
-							Name: "EmployeeName",
+							Name: "employee_name",
 							Type: engine.Type{
 								Kind: engine.TypeKindBase,
-								Name: "Text",
+								Name: "text",
 							},
 						},
 						{
-							Name: "DepartmentId",
+							Name: "department_id",
 							Type: engine.Type{
 								Kind: engine.TypeKindBase,
-								Name: "Int4",
+								Name: "int4",
 							},
 						},
 						{
-							Name: "DepartmentName",
+							Name: "department_name",
 							Type: engine.Type{
 								Kind: engine.TypeKindBase,
-								Name: "Text",
+								Name: "text",
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "NoSchema",
+			queries: map[string]string{
+				"GetOne": `
+					-- :one
+					select 1
+				`,
+			},
+			expectedTypes: []engine.Type{
+				{
+					Kind: engine.TypeKindBase,
+					Name: "int4",
+				},
+			},
+			expectedQueries: map[string]engine.Query{
+				"GetOne": {
+					Type:   engine.QueryTypeOne,
+					Inputs: []engine.Input{},
+					Outputs: []engine.Output{
+						{
+							Type: engine.Type{
+								Kind:     engine.TypeKindBase,
+								Name:     "int4",
+								Nullable: false,
 							},
 						},
 					},

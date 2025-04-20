@@ -2,14 +2,12 @@ package pgengine
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/DanielleMaywood/otter/internal/engine"
 	"github.com/DanielleMaywood/otter/internal/engine/pgengine/database"
-	"github.com/iancoleman/strcase"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -55,29 +53,37 @@ func (e Engine) ResolveQueries(ctx context.Context, queries map[string]string) (
 
 		inputNames := engine.ParseQueryInputNames(query)
 
-		queryType.Inputs = make([]engine.Input, len(preparedQuery.ParamOIDs))
-		for idx, oid := range preparedQuery.ParamOIDs {
-			inputType, err := e.resolveType(ctx, oid, nil)
-			if err != nil {
-				return result, fmt.Errorf("resolve type '%d': %w", oid, err)
-			}
-
-			typeMap[inputType.Name] = inputType
-
-			queryType.Inputs[idx] = engine.Input{
-				Name: strcase.ToLowerCamel(inputNames[fmt.Sprint(idx+1)]),
-				Type: inputType,
-			}
+		inputNullabilityMap, outputNullabilityMap, err := e.computeNullability(ctx, queryPlan)
+		if err != nil {
+			return result, fmt.Errorf("compute nullable inputs: %w", err)
 		}
 
-		outputNullabilityMap, err := e.computeNullableOutputs(ctx, queryPlan)
-		if err != nil {
-			return result, fmt.Errorf("compute nullable outputs: %w", err)
+		inputNullability := make([]bool, len(preparedQuery.ParamOIDs))
+		for idx := range preparedQuery.ParamOIDs {
+			inputNullability[idx] = inputNullabilityMap[fmt.Sprintf("$%d", idx+1)]
 		}
 
 		outputNullability := make([]bool, len(queryPlan.Output))
 		for idx, output := range queryPlan.Output {
 			outputNullability[idx] = outputNullabilityMap[output]
+		}
+
+		queryType.Inputs = make([]engine.Input, len(preparedQuery.ParamOIDs))
+		for idx, oid := range preparedQuery.ParamOIDs {
+			nullable := inputNullability[idx]
+
+			inputType, err := e.resolveType(ctx, oid, nil)
+			if err != nil {
+				return result, fmt.Errorf("resolve type '%d': %w", oid, err)
+			}
+
+			inputType.Nullable = nullable
+			typeMap[inputType.Name] = inputType
+
+			queryType.Inputs[idx] = engine.Input{
+				Name: inputNames[fmt.Sprint(idx+1)],
+				Type: inputType,
+			}
 		}
 
 		queryType.Outputs = make([]engine.Output, len(preparedQuery.Fields))
@@ -97,7 +103,7 @@ func (e Engine) ResolveQueries(ctx context.Context, queries map[string]string) (
 			}
 
 			queryType.Outputs[idx] = engine.Output{
-				Name: strcase.ToCamel(outputName),
+				Name: outputName,
 				Type: outputType,
 			}
 		}
@@ -115,7 +121,7 @@ func (e Engine) ResolveQueries(ctx context.Context, queries map[string]string) (
 }
 
 func (e Engine) resolveType(ctx context.Context, oid uint32, nullable *bool) (engine.Type, error) {
-	typeInfo, err := e.store.GetTypeByOID(ctx, sql.Null[uint32]{Valid: true, V: oid})
+	typeInfo, err := e.store.GetTypeByOID(ctx, oid)
 	if err != nil {
 		return engine.Type{}, fmt.Errorf("get type: %w", err)
 	}
@@ -124,27 +130,25 @@ func (e Engine) resolveType(ctx context.Context, oid uint32, nullable *bool) (en
 		typeInfo.NotNull = !*nullable
 	}
 
-	typeName := strcase.ToCamel(typeInfo.Name)
-
 	switch typeInfo.Type {
 	// Base
 	case 'b':
 		return engine.Type{
 			Kind:     engine.TypeKindBase,
-			Name:     typeName,
+			Name:     typeInfo.Name,
 			Nullable: !typeInfo.NotNull,
 		}, nil
 
 	// Enum
 	case 'e':
-		variants, err := e.store.GetEnumVariantsByOID(ctx, sql.Null[uint32]{Valid: true, V: oid})
+		variants, err := e.store.GetEnumVariantsByOID(ctx, oid)
 		if err != nil {
 			return engine.Type{}, fmt.Errorf("get variants: %w", err)
 		}
 
 		return engine.Type{
 			Kind:     engine.TypeKindEnum,
-			Name:     typeName,
+			Name:     typeInfo.Name,
 			Variants: variants,
 			Nullable: !typeInfo.NotNull,
 		}, nil
@@ -159,14 +163,15 @@ type queryExplain struct {
 }
 
 type queryPlan struct {
-	NodeType string      `json:"Node Type"`
-	JoinType string      `json:"Join Type"`
-	Plans    []queryPlan `json:"Plans"`
-	Output   []string    `json:"Output"`
-	Alias    string      `json:"Alias"`
-	Schema   string      `json:"Schema"`
-	Relation string      `json:"Relation Name"`
-	Rows     int         `json:"Plan Rows"`
+	NodeType  string      `json:"Node Type"`
+	Operation string      `json:"Operation"`
+	JoinType  string      `json:"Join Type"`
+	Plans     []queryPlan `json:"Plans"`
+	Output    []string    `json:"Output"`
+	Alias     string      `json:"Alias"`
+	Schema    string      `json:"Schema"`
+	Relation  string      `json:"Relation Name"`
+	Rows      int         `json:"Plan Rows"`
 }
 
 func (e Engine) explainQuery(ctx context.Context, query string) (queryPlan, error) {
@@ -201,13 +206,43 @@ func (e Engine) explainQuery(ctx context.Context, query string) (queryPlan, erro
 	return explains[0].Plan, nil
 }
 
-func (e Engine) computeNullableOutputs(ctx context.Context, plan queryPlan) (map[string]bool, error) {
+func (e Engine) computeNullability(ctx context.Context, plan queryPlan) (map[string]bool, map[string]bool, error) {
 	switch plan.NodeType {
 	case "Result":
-		return make(map[string]bool), nil
+		return make(map[string]bool), make(map[string]bool), nil
 
-	case "Hash", "Limit", "ModifyTable", "Sort", "Materialize":
-		return e.computeNullableOutputs(ctx, plan.Plans[0])
+	case "Hash", "Limit", "Sort", "Materialize":
+		return e.computeNullability(ctx, plan.Plans[0])
+
+	case "ModifyTable":
+		switch plan.Operation {
+		case "Insert":
+			inputs, outputs, err := e.computeNullability(ctx, plan.Plans[0])
+			if err != nil {
+				return nil, nil, err
+			}
+			if plan.Plans[0].NodeType != "Result" {
+				return inputs, outputs, nil
+			}
+
+			resultPlan := plan.Plans[0]
+
+			nullability, err := e.store.GetRelationNullability(ctx, database.GetRelationNullabilityParams{
+				Schema:   plan.Schema,
+				Relation: plan.Relation,
+			})
+
+			for idx, name := range resultPlan.Output {
+				if nullability[idx] {
+					inputs[name] = true
+				}
+			}
+
+			return inputs, outputs, nil
+
+		default:
+			return e.computeNullability(ctx, plan)
+		}
 
 	case "Seq Scan", "Index Scan", "Index Only Scan":
 		outputs := make(map[string]bool)
@@ -216,18 +251,18 @@ func (e Engine) computeNullableOutputs(ctx context.Context, plan queryPlan) (map
 			columnName, _ := strings.CutPrefix(output, plan.Alias+".")
 
 			nullable, err := e.store.GetColumnNullability(ctx, database.GetColumnNullabilityParams{
-				Schema:     sql.NullString{Valid: true, String: plan.Schema},
-				Relation:   sql.NullString{Valid: true, String: plan.Relation},
-				ColumnName: sql.NullString{Valid: true, String: columnName},
+				Schema:     plan.Schema,
+				Relation:   plan.Relation,
+				ColumnName: columnName,
 			})
 			if err != nil {
-				return nil, fmt.Errorf("compute output '%s' nullability: %w", output, err)
+				return nil, nil, fmt.Errorf("compute output '%s' nullability: %w", output, err)
 			}
 
 			outputs[output] = nullable
 		}
 
-		return outputs, nil
+		return make(map[string]bool), outputs, nil
 
 	case "Hash Join", "Merge Join", "Nested Loop":
 		outputs := make(map[string]bool)
@@ -235,14 +270,14 @@ func (e Engine) computeNullableOutputs(ctx context.Context, plan queryPlan) (map
 			outputs[output] = false
 		}
 
-		lhsOutputs, err := e.computeNullableOutputs(ctx, plan.Plans[0])
+		lhsInputs, lhsOutputs, err := e.computeNullability(ctx, plan.Plans[0])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
-		rhsOutputs, err := e.computeNullableOutputs(ctx, plan.Plans[1])
+		rhsInputs, rhsOutputs, err := e.computeNullability(ctx, plan.Plans[1])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		switch plan.JoinType {
@@ -294,12 +329,17 @@ func (e Engine) computeNullableOutputs(ctx context.Context, plan queryPlan) (map
 			}
 
 		default:
-			return nil, fmt.Errorf("unsupported join type: %s", plan.JoinType)
+			return nil, nil, fmt.Errorf("unsupported join type: %s", plan.JoinType)
 		}
 
-		return outputs, nil
+		inputs := rhsInputs
+		for k, v := range lhsInputs {
+			inputs[k] = v
+		}
+
+		return inputs, outputs, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported node type: %s", plan.NodeType)
+		return nil, nil, fmt.Errorf("unsupported node type: %s", plan.NodeType)
 	}
 }
